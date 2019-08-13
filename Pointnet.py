@@ -77,12 +77,9 @@ class PointNetfeat(nn.Module):
             self.fstn = STNkd(k=64)
 
     def forward(self, x):
-        """
+
         n_pts = x.size()[2]
-        print("number of points is: " + str(n_pts))
-        trans = self.stn(x)
-        x = x.transpose(2, 1)
-        """
+
 
         x = torch.bmm(x.transpose(2,1), self.stn(x))
         x = x.transpose(2, 1)
@@ -109,8 +106,8 @@ class PointNetfeat(nn.Module):
         if self.global_feat:
             return x, trans_feat
         else:
-            x = x.view(-1, 1024, 1).repeat(1, 1, n_pts)
-            return torch.cat([x, pointfeat], 1), trans_feat
+            #x = x.view(-1, 1024, 1).repeat(1, 1, n_pts)
+            return pointfeat.view(-1,64), trans_feat#torch.cat([x, pointfeat], 1), trans_feat
 
 def feature_transform_regularizer(trans):
     d = trans.size()[1]

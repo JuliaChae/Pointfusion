@@ -23,7 +23,7 @@ nusc_set = nuscenes_dataloader(1, len(nusc_classes), training = True)
 nusc_dataloader = torch.utils.data.DataLoader(nusc_set, batch_size = 1, sampler = nusc_sampler_batch, num_workers = 0)
 nusc_iters_per_epoch = int(len(nusc_set) / 1)
 
-num_epochs = 200
+num_epochs = 500
 
 res50_model = models.resnet50(pretrained=True)
 res50_model.cuda()
@@ -57,7 +57,7 @@ corners = Variable(corners)
 points = Variable(points)
 classes = Variable(classes)
 
-date = '08_12_2019__3'
+date = '08_12_2019__4'
 
 out_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = out_dir + '/trained_model/' + date

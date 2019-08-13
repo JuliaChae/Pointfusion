@@ -1,10 +1,12 @@
 from typing import Tuple
 import numpy as np
 from matplotlib.axes import Axes
+import matplotlib.pyplot as plt 
 import os.path as osp
 from PIL import Image
 from pyquaternion import Quaternion
 import pdb
+from mpl_toolkits.mplot3d import Axes3D
 
 import torch
 from torch.utils.data.sampler import Sampler
@@ -85,12 +87,15 @@ def get_pointcloud(nusc, bottom_left, top_right, pointsensor_token: str, camera_
    pc.translate(-np.array(cs_record['translation']))
    pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix.T)
 
+   render_pcl(pc.points, "original")
    # Fifth step: actually take a "picture" of the point cloud.
    depths = pc.points[2, :]
-
+  
    # Take the actual picture (matrix multiplication with camera-matrix + renormalization).
    points = view_points(pc.points[:3, :], np.array(cs_record['camera_intrinsic']), normalize=True)
+ 
    crop_points = pc.points[:3, :]
+
    # Remove points that are either outside or behind the camera. Leave a margin of 1 pixel for aesthetic reasons.
    # Also make sure points are at least 1m in front of the camera to avoid seeing the lidar points on the camera
    # casing for non-keyframes which are slightly out of sync.
@@ -103,6 +108,7 @@ def get_pointcloud(nusc, bottom_left, top_right, pointsensor_token: str, camera_
    
    points = points[:, mask]
    crop_points = crop_points[:, mask]
+   render_pcl(crop_points, "masked crop")
 
    crop_mask = np.ones(crop_points[2,:].shape[0], dtype=bool)
    crop_mask = np.logical_and(crop_mask, points[1,:]>bottom_left[1])
@@ -111,12 +117,42 @@ def get_pointcloud(nusc, bottom_left, top_right, pointsensor_token: str, camera_
    crop_mask = np.logical_and(crop_mask, points[0,:]<top_right[0])
 
    cropped = crop_points[:, crop_mask]
+   cropped_points = points[:,crop_mask]
+   render_pcl(cropped, "cropped points")
+   pdb.set_trace()
+   plt.show()
 
    if np.shape(cropped)[0]>400:
       cropped = cropped.transpose()
       cropped = cropped[np.random.choice(cropped.shape[0],400,replace=False),:]
       cropped = cropped.transpose() 
+   #render_pcl(cropped)
    return cropped
+
+def render_pcl(pc, name = "default"):
+   print(pc)
+   fig=plt.figure(name)
+   ax = fig.gca(projection='3d')
+    
+   X = pc[0]
+   Y = pc[1]
+   Z = pc[2]
+   ax.scatter(X, Y, Z, s=1)
+ 
+   # pcl characteristics 
+   print("X maximum is :" + str(X.max()))
+   print("Y maximum is :" + str(Y.max()))
+   print("Z maximum is :" + str(Z.max()))
+
+   max_range = np.array([X.max()-X.min(), Y.max()-Y.min(), Z.max()-Z.min()]).max()
+   Xb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][0].flatten() + 0.5*(X.max()+X.min())
+   Yb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][1].flatten() + 0.5*(Y.max()+Y.min())
+   Zb = 0.5*max_range*np.mgrid[-1:2:2,-1:2:2,-1:2:2][2].flatten() + 0.5*(Z.max()+Z.min())
+
+   i=0
+   for xb, yb, zb in zip(Xb, Yb, Zb):
+      i = i+1
+      ax.plot([xb], [yb], [zb], 'b')
 
 def render_box(
          corners,
@@ -153,6 +189,8 @@ def render_box(
 
    # Draw line indicating the front
    center_bottom_forward = np.mean(corners[2:4], axis=0)
+
+ 
    center_bottom = np.mean(corners[[2, 3, 7, 6]], axis=0)
    axis.plot([center_bottom[0], center_bottom_forward[0]],
            [center_bottom[1], center_bottom_forward[1]],

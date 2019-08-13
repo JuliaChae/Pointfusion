@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F 
 
 from Pointnet import PointNetfeat, STN3d, feature_transform_regularizer
-from MLP import MLP 
+from MLP import MLP_Dense as MLP
 from dataloader import nuscenes_dataloader
 from utils import ResNet50Bottom, sampler, render_box
 
@@ -30,8 +30,10 @@ res50_model.cuda()
 res50_model.eval()
 res50_conv2 = ResNet50Bottom(res50_model)
 
-pointfeat = PointNetfeat(global_feat=True)
+globalfeat = PointNetfeat(global_feat=True)
+pointfeat = PointNetfeat(global_feat=False)
 pointfeat.cuda()
+globalfeat.cuda()
 
 model = MLP()
 model.cuda()
@@ -46,28 +48,31 @@ im = torch.FloatTensor(1)
 corners = torch.FloatTensor(1)
 points = torch.FloatTensor(1)
 classes = torch.LongTensor(1)
+fusion_feat = torch.FloatTensor(2)
 
 im = im.cuda()
 corners = corners.cuda()
 points = points.cuda()
 classes = classes.cuda()
+fusion_feat = fusion_feat.cuda()
 
 im = Variable(im)
 corners = Variable(corners)
 points = Variable(points)
 classes = Variable(classes)
 
-date = '08_12_2019__3'
+date = '08_12_2019__4'
 
 out_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = out_dir + '/trained_model/' + date
 if not os.path.exists(output_dir):
       os.makedirs(output_dir)
 
+"""
 f1 = open(output_dir + '/loss.txt','w+')
 f1.write("epoch    train\n")
 f1.close()
-    
+ """  
 min_loss = 100
 for epoch in range(1, num_epochs+1):
    nusc_iter = iter(nusc_dataloader)
@@ -88,23 +93,32 @@ for epoch in range(1, num_epochs+1):
       base_feat = torch.squeeze(base_feat,2)
 
       #print(points.size())
-      global_feat, _ = pointfeat(points)
-      fusion_feat = torch.cat([global_feat, base_feat], dim=1)
+      global_feat, _ = globalfeat(points)
+      point_feat, _ = pointfeat(points)
+      
+      for point in point_feat: 
+        #torch.cat([point, global_feat, base_feat], dim=1)
+        fusion_point = torch.cat([point.unsqueeze(0), global_feat, base_feat], dim=1)
+        if fusion_feat.size() == torch.Size([2]):
+            fusion_feat = fusion_point
+        else:
+            fusion_feat = torch.cat([fusion_feat, fusion_point], dim=0)
 
-      pred_box, pred_class = model(fusion_feat)
+      offset, score = model(fusion_feat)
+      
+      #bbox_loss = criterion(pred_box, corners)
+      #cls_loss = F.cross_entropy(pred_class, classes)
+      #loss = bbox_loss.mean() + cls_loss.mean()
 
-      bbox_loss = criterion(pred_box, corners)
-      cls_loss = F.cross_entropy(pred_class, classes)
-      loss = bbox_loss.mean() + cls_loss.mean()
-
-      loss_temp += loss.item()
-      loss_epoch += loss.item()
+      #loss_temp += loss.item()
+      #loss_epoch += loss.item()
        
       #pdb.set_trace()
-      optimizer.zero_grad()
-      loss.backward()
-      optimizer.step()
+      #optimizer.zero_grad()
+      #loss.backward()
+      #optimizer.step()
 
+   """"
       if step%100 == 0 and step!=0:
          loss_temp /= 100 
          print("Epoch [{}/{}], Step [{}/{}] Loss: {:.4f}"
@@ -126,3 +140,4 @@ for epoch in range(1, num_epochs+1):
    f1.write("%2d        %.4f\n" % (epoch, loss_epoch))
    f1.close()
    loss_epoch = 0
+   """
