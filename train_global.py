@@ -4,10 +4,12 @@ from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F 
 
+from logger import Logger 
+
 from Pointnet import PointNetfeat, STN3d, feature_transform_regularizer
-from MLP import MLP 
+from MLP import MLP as MLP
 from dataloader import nuscenes_dataloader
-from utils import ResNet50Bottom, sampler, render_box
+from utils import ResNet50Bottom, sampler, render_box, render_pcl, visualize_result, IoU
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -15,102 +17,93 @@ import pdb
 
 import os 
 
+logger = Logger('./logs/4')
+
 nusc_classes = ['__background__', 
                            'pedestrian', 'barrier', 'trafficcone', 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'trailer', 'truck']
-batch_size = 1             
-nusc_sampler_batch = sampler(200, 1)
-nusc_set = nuscenes_dataloader(1, len(nusc_classes), training = True)
-nusc_dataloader = torch.utils.data.DataLoader(nusc_set, batch_size = 1, sampler = nusc_sampler_batch, num_workers = 0)
-nusc_iters_per_epoch = int(len(nusc_set) / 1)
+batch_size = 4             
+nusc_sampler_batch = sampler(400, 2)
+nusc_set = nuscenes_dataloader(batch_size, len(nusc_classes), training = True)
+nusc_dataloader = torch.utils.data.DataLoader(nusc_set, batch_size = batch_size, sampler = nusc_sampler_batch)
+nusc_iters_per_epoch = int(len(nusc_set) / batch_size)
 
-num_epochs = 500
-
-res50_model = models.resnet50(pretrained=True)
-res50_model.cuda()
-res50_model.eval()
-res50_conv2 = ResNet50Bottom(res50_model)
-
-pointfeat = PointNetfeat(global_feat=True)
-pointfeat.cuda()
+num_epochs = 200
 
 model = MLP()
 model.cuda()
 
-trans = STN3d()
-trans.cuda()
-
 optimizer = torch.optim.Adam(model.parameters(), lr = 0.001)
-criterion = nn.SmoothL1Loss()
+regressor = nn.SmoothL1Loss()
+classifier = nn.BCELoss()
 
 im = torch.FloatTensor(1)
-corners = torch.FloatTensor(1)
 points = torch.FloatTensor(1)
-classes = torch.LongTensor(1)
+offset = torch.FloatTensor(1)
+m = torch.FloatTensor(1)
+rot_matrix = torch.FloatTensor(1)
+gt_corners = torch.FloatTensor(1)
 
 im = im.cuda()
-corners = corners.cuda()
 points = points.cuda()
-classes = classes.cuda()
+offset = offset.cuda()
+m = m.cuda()
+rot_matrix = rot_matrix.cuda()
+gt_corners = gt_corners.cuda()
 
 im = Variable(im)
-corners = Variable(corners)
 points = Variable(points)
-classes = Variable(classes)
+offset = Variable(offset)
+m= Variable(m)
+rot_matrix = Variable(rot_matrix)
+gt_corners = Variable(gt_corners)
 
-date = '08_12_2019__4'
+
+date = '08_26_2019__1'
 
 out_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = out_dir + '/trained_model/' + date
 if not os.path.exists(output_dir):
       os.makedirs(output_dir)
 
-f1 = open(output_dir + '/loss.txt','w+')
-f1.write("epoch    train\n")
-f1.close()
-    
 min_loss = 100
+
 for epoch in range(1, num_epochs+1):
    nusc_iter = iter(nusc_dataloader)
-   model.train()
    loss_temp = 0
    loss_epoch = 0
+   model = model.train()
+
    for step in range(nusc_iters_per_epoch):
       data = next(nusc_iter)
-      #pdb.set_trace()
       with torch.no_grad():
           im.resize_(data[0].size()).copy_(data[0])
-          corners.resize_(data[1].size()).copy_(data[1])
-          points.resize_(data[2].size()).copy_(data[2])
-          classes.resize_(data[3].size()).copy_(data[3])
-    
-      base_feat = res50_conv2(im)
-      base_feat = torch.squeeze(base_feat,2)
-      base_feat = torch.squeeze(base_feat,2)
+          points.resize_(data[1].size()).copy_(data[1])
+          offset.resize_(data[2].size()).copy_(data[2])
+          m.resize_(data[3].size()).copy_(data[3])
+          rot_matrix.resize_(data[4].size()).copy_(data[4])
+          gt_corners.resize_(data[5].size()).copy_(data[5]) 
 
-      #print(points.size())
-      global_feat, _ = pointfeat(points)
-      fusion_feat = torch.cat([global_feat, base_feat], dim=1)
-
-      pred_box, pred_class = model(fusion_feat)
-
-      bbox_loss = criterion(pred_box, corners)
-      cls_loss = F.cross_entropy(pred_class, classes)
-      loss = bbox_loss.mean() + cls_loss.mean()
+      boxes, classes = model(im, points)
+      loss = 0
+      n = 400
+      
+      loss = regressor(boxes, gt_corners)  
 
       loss_temp += loss.item()
       loss_epoch += loss.item()
-       
-      #pdb.set_trace()
+
       optimizer.zero_grad()
       loss.backward()
-      optimizer.step()
+      optimizer.step()  
 
-      if step%100 == 0 and step!=0:
-         loss_temp /= 100 
+      if step%10 == 0 and step!=0:
+         loss_temp /= 10
          print("Epoch [{}/{}], Step [{}/{}] Loss: {:.4f}"
                .format(epoch, num_epochs+1, step, nusc_iters_per_epoch, loss_temp))
          loss_temp = 0
    loss_epoch /= nusc_iters_per_epoch
+   logger.scalar_summary('loss', loss_epoch, epoch)
+   
    if loss_epoch < min_loss: 
       min_loss = loss_epoch
       print("Saving model...")
@@ -122,7 +115,4 @@ for epoch in range(1, num_epochs+1):
                }, save_name)
     
    print("Loss for Epoch {} is {}".format(epoch, loss_epoch))
-   f1 = open(output_dir + '/loss.txt','a+')
-   f1.write("%2d        %.4f\n" % (epoch, loss_epoch))
-   f1.close()
    loss_epoch = 0

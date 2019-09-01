@@ -1,2 +1,5 @@
-# Don't track content of tese folders
+# Don't track content of these folders
 trained_model/
+logs/
+runs/
+visualize/

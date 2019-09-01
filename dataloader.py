@@ -31,7 +31,9 @@ from mpl_toolkits.mplot3d import Axes3D
 from utils import get_pointcloud 
 
 import cv2 
-  
+
+from logger import Logger 
+
 class nuscenes_dataloader(data.Dataset):
   def __init__(self, batch_size, num_classes, training=True, normalize=None):
     self._num_classes = num_classes
@@ -44,15 +46,13 @@ class nuscenes_dataloader(data.Dataset):
     self.classes = ('__background__', 
                            'pedestrian', 'barrier', 'trafficcone', 'bicycle', 'bus', 'car', 'construction', 'motorcycle', 'trailer', 'truck')
 
-    PATH = self.data_path + '/mini_annotations_list.txt'
+    PATH = self.data_path + '/annotations_list.txt'
 
     with open(PATH) as f:
         self.token = [x.strip() for x in f.readlines()]
-    self.token = self.token[:200]
-    #pdb.set_trace()
+    self.token = self.token[:400]
 
   def __getitem__(self, index):
-     
     # gather tokens and samples needed for data extraction
     tokens = self.token[index]
     im_token = tokens.split('_')[0]
@@ -74,21 +74,7 @@ class nuscenes_dataloader(data.Dataset):
     for box in boxes:
         corners = view_points(box.corners(), view=camera_intrinsic, normalize=True)
         if box.token == annotation_token:
-            if box.name.split('.')[0] == 'vehicle':
-                if box.name.split('.')[1] != 'emergency':
-                    name = box.name.split('.')[1]
-                else:
-                    name = ''
-            elif box.name.split('.')[0] == 'human':
-                name = 'pedestrian'
-            elif box.name.split('.')[0] == 'movable_object':
-                if box.name.split('.')[1] != 'debris' and box.name.split('.')[1] != 'pushable_pullable': 
-                    name = box.name.split('.')[1]
-                else:
-                    name = ''
-            else:
-                name = ''
-            
+            # Find the crop area of the box 
             width = corners[0].max() - corners[0].min()
             height = corners[1].max() - corners[1].min()
             x_mid = (corners[0].max() + corners[0].min())/2
@@ -100,42 +86,28 @@ class nuscenes_dataloader(data.Dataset):
             if (y_mid - side/2) < 0:
                side = y_mid*2
             
+            # Crop the image
             bottom_left = [int(x_mid - side/2), int(y_mid - side/2)]
             top_right = [int(x_mid + side/2), int(y_mid + side/2)]
             corners[0]=corners[0] - bottom_left[0]
             corners[1]=corners[1] - bottom_left[1]
             crop_img = im[bottom_left[1]:top_right[1],bottom_left[0]:top_right[0]]
- 
-            #print(crop_img)
-            #print(len(crop_img))
-            cls = self.classes.index(name)
-            
+                   
+            # Scale to same size             
             scale = 128/ side
-            corners[0] = corners[0]*scale
-            corners[1] = corners[1]*scale
-            corners = corners.astype(int).transpose()
-            scaled = cv2.resize(crop_img, (0,0), fx = scale, fy=scale)
-            #_, fig = plt.subplots()
-            #fig = plt.imshow(scaled)
-            """
-            if self.training == False:
-               print(corners)
-               fig = plt.plot()
-               fig = plt.imshow(scaled)
-               plt.show()
-            """
-            im_dis = scaled
+            scaled = cv2.resize(crop_img, (128, 128))
             crop_img = np.transpose(scaled, (2,0,1))
-            crop_img = crop_img.astype(int)
-            pcl = get_pointcloud(self.nusc, bottom_left, top_right, lidar_token, im_token)
-            break
+            crop_img = crop_img.astype(np.float32)
+            crop_img /= 255
             
-    #plt.show()
-    #pdb.set_trace()
-    if self.training == True:
-        return crop_img, corners, pcl, cls
-    else:
-        return crop_img, corners, pcl, cls, im_dis
+            # Get corresponding point cloud for the crop
+            pcl, m, offset, camera_intrinsic, box_corners = get_pointcloud(self.nusc, bottom_left, top_right, box, lidar_token, im_token)
+            break
+
+    pcl = pcl.astype(np.float32)
+    box_corners = box_corners.astype(np.float32)
+    
+    return crop_img, pcl, offset, m, camera_intrinsic, box_corners
 
   def __len__(self):
     return len(self.token)
